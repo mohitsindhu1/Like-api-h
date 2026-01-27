@@ -38,3 +38,15 @@ pycryptodome
 pymongo
 requests
 Werkzeug
+aiohttp
+cachetools
+dnspython
+flask
+flask-cors
+googleapis-common-protos
+httpx
+protobuf
+pycryptodome
+pymongo
+requests
+Werkzeug

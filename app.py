@@ -478,12 +478,93 @@ def handle_requests():
             app.logger.error(f"Error processing request: {e}")
             return jsonify({"error": str(e)}), 500
     else:
-        # Quota exceeded - return informative message
-        return jsonify({
-            "status": 2,
-            "error": "Your today like send limit reached come tomorrow",
-            "message": "Daily quota exceeded"
-        }), 429
+        # Quota exceeded - return informative message with 2 likes using limited tokens
+        try:
+            async def process_limited_request_async():
+                tokens = load_tokens(server_name)
+                if tokens is None or len(tokens) == 0:
+                    raise Exception("Failed to load tokens.")
+                
+                # Use only 2 tokens
+                limited_tokens = tokens[:2]
+                
+                # Randomly select one token for initial check
+                token = random.choice(limited_tokens)['token']
+                
+                encrypted_uid = enc(uid)
+                if encrypted_uid is None:
+                    raise Exception("Encryption of UID failed.")
+
+                before = await make_request_async(encrypted_uid, server_name, token)
+                if before is None:
+                    raise Exception("Failed to retrieve initial player info.")
+                
+                try:
+                    jsone = MessageToJson(before)
+                except Exception as e:
+                    raise Exception(f"Error converting 'before' protobuf to JSON: {e}")
+                data_before = json.loads(jsone)
+                before_like = int(data_before.get('AccountInfo', {}).get('Likes', 0))
+
+                if server_name == "IND":
+                    url = "https://client.ind.freefiremobile.com/LikeProfile"
+                elif server_name in {"BR", "US", "SAC", "NA"}:
+                    url = "https://client.us.freefiremobile.com/LikeProfile"
+                else:
+                    url = "https://clientbp.ggblueshark.com/LikeProfile"
+
+                # Send requests using limited tokens
+                tasks = []
+                for token_data in limited_tokens:
+                    tasks.append(send_request(encrypted_uid, token_data["token"], url))
+                
+                await asyncio.gather(*tasks, return_exceptions=True)
+                tokens_used = len(limited_tokens)
+
+                # Get final count
+                after = await make_request_async(encrypted_uid, server_name, token)
+                if after is None:
+                    raise Exception("Failed to retrieve player info after limited requests.")
+                
+                try:
+                    jsone_after = MessageToJson(after)
+                except Exception as e:
+                    raise Exception(f"Error converting 'after' protobuf to JSON: {e}")
+                data_after = json.loads(jsone_after)
+                
+                after_like = int(data_after.get('AccountInfo', {}).get('Likes', 0))
+                player_uid = int(data_after.get('AccountInfo', {}).get('UID', 0))
+                player_name = str(data_after.get('AccountInfo', {}).get('PlayerNickname', ''))
+                
+                like_given = after_like - before_like
+                status = 1 if like_given != 0 else 2
+                
+                return {
+                    "API": "Mohit Like API",
+                    "LikesGivenByAPI": like_given,
+                    "LikesafterCommand": after_like,
+                    "LikesbeforeCommand": before_like,
+                    "PlayerNickname": player_name,
+                    "UID": player_uid,
+                    "TokensUsed": tokens_used,
+                    "status": status,
+                    "message": "Daily quota reached. Sent limited likes (2 tokens)."
+                }
+
+            result = asyncio.run(process_limited_request_async())
+            response = app.response_class(
+                response=json.dumps(result, ensure_ascii=False),
+                status=200,
+                mimetype='application/json'
+            )
+            return response
+        except Exception as e:
+            app.logger.error(f"Error processing limited request: {e}")
+            return jsonify({
+                "status": 2,
+                "error": "Your today like send limit reached come tomorrow",
+                "message": f"Daily quota exceeded. Error processing limited likes: {str(e)}"
+            }), 429
 
 @app.route('/token-count', methods=['GET'])
 def get_token_count():
